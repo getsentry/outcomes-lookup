@@ -139,16 +139,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut found = false;
     for row in block.rows() {
         let event_id: Option<Uuid> = row.get("event_id")?;
-        let project_id: Option<u64> = row.get("project_id")?;
-        let org_id: Option<u64> = row.get("org_id")?;
+        let project_id: u64 = row.get("project_id")?;
+        let org_id: u64 = row.get("org_id")?;
         let key_id: Option<u64> = row.get("key_id")?;
         let timestamp: DateTime<Tz> = row.get("timestamp")?;
         let outcome_raw: u8 = row.get("outcome")?;
         let reason: Option<String> = row.get("reason")?;
         let outcome: Outcome = outcome_raw.into();
         println!("event_id: {}", OptFormat(event_id));
-        println!("project_id: {}", OptFormat(project_id));
-        println!("org_id: {}", OptFormat(org_id));
+        println!("project_id: {}", project_id);
+        println!("org_id: {}", org_id);
         println!("key_id: {}", OptFormat(key_id));
         println!("timestamp: {}", timestamp);
         println!("outcome: {:?}", outcome);
