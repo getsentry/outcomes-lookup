@@ -10,11 +10,18 @@ type Error = Box<dyn std::error::Error>;
 
 const CLICKHOUSE_FORMAT: &'static str = "%Y-%m-%d %H:%M:%S";
 
+fn get_default_dsn() -> String {
+    match std::env::var("OUTCOMES_LOOKUP_DSN") {
+        Ok(value) => value,
+        Err(_) => "tcp://127.0.0.1:9000".to_string(),
+    }
+}
+
 /// Looks up outcomes from the outcomes dataset.
 #[derive(Debug, FromArgs)]
 struct Cli {
     /// the DSN for clickhouse to connect to.
-    #[argh(option, default = "\"tcp://127.0.0.1:9000\".to_string()")]
+    #[argh(option, default = "get_default_dsn()")]
     pub dsn: String,
     /// the project ID to scope the search down to.
     #[argh(option, short = 'p')]
