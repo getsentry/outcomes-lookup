@@ -78,7 +78,7 @@ async fn find_org_id(pool: &Pool, project_id: u64) -> Result<Option<u64>, Error>
 
     let block = client
         .query(format!(
-            "select org_id from outcomes_raw_local prewhere project_id = {} limit 1",
+            "select org_id from outcomes_raw_local prewhere project_id = {} where org_id != 0 limit 1",
             project_id
         ))
         .fetch_all()
