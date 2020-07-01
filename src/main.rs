@@ -1,7 +1,8 @@
 use std::fmt::Write;
 
 use argh::FromArgs;
-use chrono::{DateTime, Utc};
+use chrono::offset::TimeZone;
+use chrono::{DateTime, NaiveDate, Utc};
 use chrono_tz::Tz;
 use clickhouse_rs::Pool;
 use uuid::Uuid;
@@ -23,6 +24,9 @@ struct Cli {
     /// the DSN for clickhouse to connect to.
     #[argh(option, default = "get_default_dsn()")]
     pub dsn: String,
+    /// the org ID to scope the search down to.
+    #[argh(option, short = 'o')]
+    pub org_id: Option<u64>,
     /// the project ID to scope the search down to.
     #[argh(option, short = 'p')]
     pub project_id: Option<u64>,
@@ -32,6 +36,9 @@ struct Cli {
     /// end time to narrow down search.
     #[argh(option)]
     pub to: Option<DateTime<Utc>>,
+    /// the UTC day to narrow the search down to (alternative to to/from)
+    #[argh(option)]
+    pub day: Option<NaiveDate>,
     /// the event ID to look up.
     #[argh(positional)]
     pub event_id: Uuid,
@@ -99,42 +106,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = Pool::new(cli.dsn);
 
     let mut client = pool.get_handle().await?;
-    let mut query = "select * from outcomes_raw_local prewhere ".to_string();
+    let mut prewhere = vec![];
+    let mut where_ = vec![];
 
     if let Some(project_id) = cli.project_id {
-        let org_id = find_org_id(&pool, project_id)
-            .await?
-            .ok_or("could not find org_id")?;
-
-        write!(
-            &mut query,
-            "project_id = {} and org_id = {}",
-            project_id, org_id
-        )
-        .unwrap();
+        prewhere.push(format!("project_id = {}", project_id));
     }
 
-    if let Some(from) = cli.from {
-        write!(
-            &mut query,
-            " and timestamp >= '{}'",
-            from.format(CLICKHOUSE_FORMAT)
-        )
-        .unwrap();
+    let org_id = match (cli.org_id, cli.project_id) {
+        (Some(org_id), _) => Some(org_id),
+        (None, Some(project_id)) => Some(
+            find_org_id(&pool, project_id)
+                .await?
+                .ok_or("could not find org_id for project_id")?,
+        ),
+        _ => None,
+    };
+    if let Some(org_id) = org_id {
+        prewhere.push(format!("org_id = {}", org_id));
     }
 
-    if let Some(to) = cli.to {
-        write!(
-            &mut query,
-            " and timestamp < '{}'",
-            to.format(CLICKHOUSE_FORMAT)
+    let (from, to) = if let Some(day) = cli.day.map(|x| Utc.from_utc_date(&x)) {
+        (
+            Some(day.and_hms(0, 0, 0)),
+            Some(day.succ().and_hms(0, 0, 0)),
         )
-        .unwrap();
+    } else {
+        (cli.from, cli.to)
+    };
+
+    if let Some(from) = from {
+        prewhere.push(format!("timestamp >= '{}'", from.format(CLICKHOUSE_FORMAT)));
     }
 
-    write!(&mut query, " where event_id = '{}'", cli.event_id).unwrap();
+    if let Some(to) = to {
+        prewhere.push(format!("timestamp < '{}'", to.format(CLICKHOUSE_FORMAT)));
+    }
 
-    let block = client.query(query).fetch_all().await?;
+    where_.push(format!("event_id = '{}'", cli.event_id));
+
+    let mut query = "select * from outcomes_raw_local".to_string();
+    if !prewhere.is_empty() {
+        write!(&mut query, " prewhere {}", prewhere.join(" and ")).unwrap();
+    }
+    if !where_.is_empty() {
+        write!(&mut query, " where {}", where_.join(" and ")).unwrap();
+    }
+
+    let block = client.query(&query).fetch_all().await?;
 
     let mut found = false;
     for row in block.rows() {
